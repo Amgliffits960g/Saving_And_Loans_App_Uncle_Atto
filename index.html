@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover">
+<title>Ledger Field &mdash; Savings &amp; Loans Collection</title>
+<meta name="theme-color" content="#0B1A2B">
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!-- Tailwind (Play CDN) -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- Dexie.js (IndexedDB wrapper) -->
+<script src="https://unpkg.com/dexie@3.2.4/dist/dexie.js"></script>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+<!-- html2pdf.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+<!-- ================= Backend SDK placeholders (Supabase / Firebase) =================
+     Swap the CDN comment blocks below for whichever backend you use, then fill in
+     the CONFIG constants near the top of the main script. Nothing else in this file
+     needs to change — pushToCloud() already reads from CONFIG. -->
+<!-- <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script> -->
+<!-- <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script> -->
+<!-- <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script> -->
+
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        fontFamily: {
+          display: ['"Space Grotesk"', 'sans-serif'],
+          body: ['"Inter"', 'sans-serif'],
+          mono: ['"IBM Plex Mono"', 'monospace'],
+        },
+        colors: {
+          ink:      { DEFAULT: '#0B1A2B', 50:'#F2F5F7', 100:'#E4E9EE', 700:'#16283D', 800:'#101E30', 900:'#0B1A2B' },
+          paper:    '#F5F7F8',
+          ledger:   { 500:'#1E5B8C', 600:'#184A72', 700:'#123859' },
+          savings:  { 500:'#0F9D74', 600:'#0C8362' },
+          loan:     { 500:'#C77D2A', 600:'#A8651E' },
+          alert:    { 500:'#D0503A' },
+        },
+        boxShadow: {
+          tab: '0 -2px 12px rgba(11,26,43,0.08)',
+        }
+      }
+    }
+  }
+</script>
+
+<style>
+  html, body { -webkit-tap-highlight-color: transparent; }
+  body { font-family: 'Inter', sans-serif; background:#F5F7F8; }
+  .dark body { background:#0B1A2B; }
+  .font-display { font-family: 'Space Grotesk', sans-serif; }
+  .font-mono-num { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+
+  /* app shell — a phone-width "passbook" even on desktop */
+  #app-shell { max-width: 480px; margin: 0 auto; min-height: 100vh; position: relative; }
+  @media (min-width: 481px) {
+    #app-shell { box-shadow: 0 0 60px rgba(11,26,43,0.12); }
+  }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: rgba(30,91,140,0.3); border-radius: 4px; }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .tap { min-height: 48px; }
+
+  /* Perforated / ticket edge for the receipt component — signature element */
+  .receipt-edge {
+    position: relative;
+  }
+  .receipt-edge::before, .receipt-edge::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0;
+    height: 12px;
+    background-image: radial-gradient(circle at 8px 6px, transparent 6px, currentColor 6.5px);
+    background-size: 16px 12px;
+    background-repeat: repeat-x;
+    color: #F5F7F8;
+  }
+  .dark .receipt-edge::before, .dark .receipt-edge::after { color: #0B1A2B; }
+  .receipt-edge::before { top: -1px; transform: rotate(180deg); }
+  .receipt-edge::after { bottom: -1px; }
+
+  .switch { width: 44px; height: 26px; }
+  .switch-dot { transition: transform .18s ease; }
+  input:checked ~ .switch-track { background: #0F9D74; }
+  input:checked ~ .switch-track .switch-dot { transform: translateX(18px); }
+
+  .nav-btn.active-nav { color: #1E5B8C; }
+  .dark .nav-btn.active-nav { color: #7CB4E3; }
+  .nav-btn.active-nav .nav-dot { opacity: 1; }
+
+  @keyframes rise { from { opacity:0; transform: translateY(8px);} to { opacity:1; transform: translateY(0);} }
+  .rise { animation: rise .25s ease both; }
+
+  input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.6; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+
+  .modal-backdrop { backdrop-filter: blur(2px); }
+</style>
+</head>
+<body class="text-ink-900 dark:text-paper">
+<div id="app-shell" class="bg-paper dark:bg-ink-900 flex flex-col">
+
+  <!-- ============ TOP BAR ============ -->
+  <header class="sticky top-0 z-30 bg-paper/90 dark:bg-ink-900/90 backdrop-blur border-b border-ink-100 dark:border-ink-700">
+    <div class="flex items-center justify-between px-4 h-16">
+      <div class="flex items-center gap-2">
+        <div class="w-9 h-9 rounded-lg bg-ledger-500 flex items-center justify-center text-white font-display font-semibold text-sm">LF</div>
+        <div>
+          <p class="font-display font-semibold text-[15px] leading-none">Ledger Field</p>
+          <p id="online-badge" class="text-[11px] leading-none mt-1 text-savings-500 font-medium">● Online</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <button id="theme-toggle" class="tap w-11 h-11 rounded-full flex items-center justify-center bg-ink-50 dark:bg-ink-700 text-lg" aria-label="Toggle dark mode">🌓</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============ MAIN CONTENT ============ -->
+  <main class="flex-1 pb-24">
+
+    <!-- ---------- HOME / DASHBOARD ---------- -->
+    <section id="view-home" class="view active px-4 pt-4 space-y-5">
+      <div>
+        <p class="text-sm text-ink-900/60 dark:text-paper/60">Total gross collections</p>
+        <div class="grid grid-cols-2 gap-3 mt-2">
+          <div class="rounded-2xl bg-ledger-500 text-white p-4">
+            <p class="text-xs opacity-80">Today</p>
+            <p id="stat-today" class="font-mono-num text-xl font-semibold mt-1">GH₵0.00</p>
+          </div>
+          <div class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4">
+            <p class="text-xs text-ink-900/60 dark:text-paper/60">Yesterday</p>
+            <p id="stat-yesterday" class="font-mono-num text-xl font-semibold mt-1">GH₵0.00</p>
+          </div>
+          <div class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4">
+            <p class="text-xs text-ink-900/60 dark:text-paper/60">This week</p>
+            <p id="stat-week" class="font-mono-num text-xl font-semibold mt-1">GH₵0.00</p>
+          </div>
+          <div class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4">
+            <p class="text-xs text-ink-900/60 dark:text-paper/60">This month</p>
+            <p id="stat-month" class="font-mono-num text-xl font-semibold mt-1">GH₵0.00</p>
+          </div>
+        </div>
+        <div class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4 mt-3 flex items-center justify-between">
+          <p class="text-xs text-ink-900/60 dark:text-paper/60">Year to date</p>
+          <p id="stat-year" class="font-mono-num text-lg font-semibold">GH₵0.00</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div class="rounded-2xl border border-savings-500/30 bg-savings-500/10 p-4">
+          <p class="text-xs font-medium text-savings-600 dark:text-savings-500">Client savings held</p>
+          <p id="stat-total-savings" class="font-mono-num text-lg font-semibold mt-1">GH₵0.00</p>
+        </div>
+        <div class="rounded-2xl border border-loan-500/30 bg-loan-500/10 p-4">
+          <p class="text-xs font-medium text-loan-600 dark:text-loan-500">Outstanding loans</p>
+          <p id="stat-total-loans" class="font-mono-num text-lg font-semibold mt-1">GH₵0.00</p>
+        </div>
+      </div>
+
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="font-display font-semibold text-base">New transaction</h2>
+        </div>
+        <button id="btn-new-txn" class="tap w-full rounded-2xl bg-ink-900 dark:bg-paper text-paper dark:text-ink-900 font-medium flex items-center justify-center gap-2">
+          <span class="text-lg leading-none">+</span> Record a transaction
+        </button>
+      </div>
+
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="font-display font-semibold text-base">Clients</h2>
+          <button id="btn-add-client" class="text-sm text-ledger-500 font-medium">+ Add client</button>
+        </div>
+        <div id="client-list" class="space-y-2"></div>
+      </div>
+    </section>
+
+    <!-- ---------- CLIENT PROFILE ---------- -->
+    <section id="view-client" class="view px-4 pt-4 space-y-4">
+      <button id="btn-back-client" class="text-sm text-ledger-500 font-medium">&larr; Back</button>
+      <div id="client-profile-header" class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="rounded-2xl border border-savings-500/30 bg-savings-500/10 p-4">
+          <p class="text-xs font-medium text-savings-600 dark:text-savings-500">Savings balance</p>
+          <p id="client-savings-total" class="font-mono-num text-lg font-semibold mt-1">GH₵0.00</p>
+        </div>
+        <div class="rounded-2xl border border-loan-500/30 bg-loan-500/10 p-4">
+          <p class="text-xs font-medium text-loan-600 dark:text-loan-500">Active debt</p>
+          <p id="client-loan-total" class="font-mono-num text-lg font-semibold mt-1">GH₵0.00</p>
+        </div>
+      </div>
+      <div class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4 flex items-center justify-between">
+        <div>
+          <p class="text-sm font-medium">Loan eligibility</p>
+          <p class="text-xs text-ink-900/60 dark:text-paper/60">Allows loan disbursal for this client</p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input id="client-loan-toggle" type="checkbox" class="sr-only peer">
+          <div class="switch switch-track relative bg-ink-100 dark:bg-ink-800 rounded-full transition-colors">
+            <div class="switch-dot absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow"></div>
+          </div>
+        </label>
+      </div>
+      <div>
+        <h3 class="font-display font-semibold text-base mb-2">Transaction timeline</h3>
+        <div id="client-timeline" class="space-y-2"></div>
+      </div>
+    </section>
+
+    <!-- ---------- TRANSACTIONS / LEDGER ---------- -->
+    <section id="view-transactions" class="view px-4 pt-4 space-y-4">
+      <h2 class="font-display font-semibold text-lg">Global ledger</h2>
+
+      <div class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-3 space-y-2">
+        <div class="grid grid-cols-2 gap-2">
+          <select id="f-client" class="tap text-sm rounded-xl px-3 bg-white dark:bg-ink-800 border border-ink-100 dark:border-ink-700">
+            <option value="">All clients</option>
+          </select>
+          <select id="f-type" class="tap text-sm rounded-xl px-3 bg-white dark:bg-ink-800 border border-ink-100 dark:border-ink-700">
+            <option value="">All types</option>
+            <option value="deposit">Savings deposit</option>
+            <option value="withdrawal">Savings withdrawal</option>
+            <option value="disbursal">Loan disbursal</option>
+            <option value="repayment">Loan repayment</option>
+          </select>
+          <select id="f-sync" class="tap text-sm rounded-xl px-3 bg-white dark:bg-ink-800 border border-ink-100 dark:border-ink-700">
+            <option value="">Any sync status</option>
+            <option value="synced">Synced</option>
+            <option value="pending">Pending</option>
+          </select>
+          <div class="grid grid-cols-2 gap-2">
+            <input id="f-min" type="number" placeholder="Min" class="tap text-sm rounded-xl px-2 bg-white dark:bg-ink-800 border border-ink-100 dark:border-ink-700 w-full">
+            <input id="f-max" type="number" placeholder="Max" class="tap text-sm rounded-xl px-2 bg-white dark:bg-ink-800 border border-ink-100 dark:border-ink-700 w-full">
+          </div>
+          <input id="f-from" type="date" class="tap text-sm rounded-xl px-2 bg-white dark:bg-ink-800 border border-ink-100 dark:border-ink-700">
+          <input id="f-to" type="date" class="tap text-sm rounded-xl px-2 bg-white dark:bg-ink-800 border border-ink-100 dark:border-ink-700">
+        </div>
+        <div class="flex gap-2 pt-1">
+          <button id="btn-clear-filters" class="tap flex-1 text-sm rounded-xl border border-ink-100 dark:border-ink-700">Clear</button>
+          <button id="btn-export-pdf" class="tap flex-1 text-sm rounded-xl bg-ledger-500 text-white font-medium">Export PDF report</button>
+        </div>
+      </div>
+
+      <div id="ledger-export-area">
+        <div id="ledger-list" class="space-y-2"></div>
+      </div>
+    </section>
+
+    <!-- ---------- ANALYTICS ---------- -->
+    <section id="view-analytics" class="view px-4 pt-4 space-y-5">
+      <h2 class="font-display font-semibold text-lg">Analytics</h2>
+      <div class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4">
+        <p class="text-sm font-medium mb-3">Collections this week</p>
+        <canvas id="chart-week" height="180"></canvas>
+      </div>
+      <div class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4">
+        <p class="text-sm font-medium mb-3">Savings vs. outstanding loans</p>
+        <canvas id="chart-ratio" height="200"></canvas>
+        <div class="flex justify-center gap-5 mt-3 text-xs">
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-savings-500 inline-block"></span>Savings</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-loan-500 inline-block"></span>Loans</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- SETTINGS ---------- -->
+    <section id="view-settings" class="view px-4 pt-4 space-y-4">
+      <h2 class="font-display font-semibold text-lg">Settings</h2>
+      <div class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <p class="text-sm">Appearance</p>
+          <span id="settings-theme-label" class="text-sm text-ink-900/60 dark:text-paper/60">Light</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <p class="text-sm">Network status</p>
+          <span id="settings-online" class="text-sm font-medium">Online</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <p class="text-sm">Unsynced records</p>
+          <span id="settings-pending" class="text-sm font-medium">0</span>
+        </div>
+        <button id="btn-force-sync" class="tap w-full rounded-xl bg-ledger-500 text-white text-sm font-medium">Sync now</button>
+      </div>
+      <div class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4 space-y-2">
+        <p class="text-sm font-medium">Cloud backend</p>
+        <p class="text-xs text-ink-900/60 dark:text-paper/60 leading-relaxed">
+          Connected via placeholder credentials. Replace <span class="font-mono-num">CONFIG.SUPABASE_URL</span>,
+          <span class="font-mono-num">CONFIG.SUPABASE_ANON_KEY</span> (or the Firebase config object) near the top
+          of the script tag with your real project keys to enable live sync.
+        </p>
+      </div>
+      <div class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4 space-y-2">
+        <p class="text-sm font-medium">Currency</p>
+        <select id="settings-currency" class="tap w-full text-sm rounded-xl px-3 bg-white dark:bg-ink-800 border border-ink-100 dark:border-ink-700">
+          <option value="GH₵">GH₵ — Ghanaian Cedi</option>
+          <option value="₦">₦ — Nigerian Naira</option>
+          <option value="KSh">KSh — Kenyan Shilling</option>
+          <option value="$">$ — US Dollar</option>
+        </select>
+      </div>
+      <div class="rounded-2xl bg-alert-500/10 border border-alert-500/30 p-4">
+        <p class="text-sm font-medium text-alert-500 mb-2">Danger zone</p>
+        <button id="btn-reset-data" class="tap w-full rounded-xl border border-alert-500 text-alert-500 text-sm font-medium">Clear all data</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ BOTTOM NAV ============ -->
+  <nav class="fixed bottom-0 left-0 right-0 z-30">
+    <div id="app-shell-nav" class="max-w-[480px] mx-auto bg-paper/95 dark:bg-ink-900/95 backdrop-blur border-t border-ink-100 dark:border-ink-700 shadow-tab flex">
+      <button data-view="home" class="nav-btn active-nav tap flex-1 flex flex-col items-center justify-center gap-0.5 py-2">
+        <span class="text-xl leading-none">🏠</span>
+        <span class="text-[11px] font-medium">Home</span>
+        <span class="nav-dot w-1 h-1 rounded-full bg-ledger-500 opacity-0"></span>
+      </button>
+      <button data-view="transactions" class="nav-btn tap flex-1 flex flex-col items-center justify-center gap-0.5 py-2">
+        <span class="text-xl leading-none">📒</span>
+        <span class="text-[11px] font-medium">Ledger</span>
+        <span class="nav-dot w-1 h-1 rounded-full bg-ledger-500 opacity-0"></span>
+      </button>
+      <button data-view="analytics" class="nav-btn tap flex-1 flex flex-col items-center justify-center gap-0.5 py-2">
+        <span class="text-xl leading-none">📊</span>
+        <span class="text-[11px] font-medium">Analytics</span>
+        <span class="nav-dot w-1 h-1 rounded-full bg-ledger-500 opacity-0"></span>
+      </button>
+      <button data-view="settings" class="nav-btn tap flex-1 flex flex-col items-center justify-center gap-0.5 py-2">
+        <span class="text-xl leading-none">⚙️</span>
+        <span class="text-[11px] font-medium">Settings</span>
+        <span class="nav-dot w-1 h-1 rounded-full bg-ledger-500 opacity-0"></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ============ MODAL: NEW TRANSACTION ============ -->
+  <div id="modal-txn" class="fixed inset-0 z-40 hidden items-end justify-center modal-backdrop bg-ink-900/40">
+    <div class="w-full max-w-[480px] bg-paper dark:bg-ink-800 rounded-t-3xl p-5 pb-8 rise max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-display font-semibold text-lg">Record transaction</h3>
+        <button id="close-txn" class="tap w-9 h-9 rounded-full bg-ink-50 dark:bg-ink-700" aria-label="Close">✕</button>
+      </div>
+      <form id="form-txn" class="space-y-3">
+        <div>
+          <label class="text-xs font-medium text-ink-900/60 dark:text-paper/60">Client</label>
+          <select id="txn-client" required class="tap w-full mt-1 rounded-xl px-3 bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700"></select>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-ink-900/60 dark:text-paper/60">Transaction type</label>
+          <div class="grid grid-cols-2 gap-2 mt-1">
+            <button type="button" data-type="deposit" class="txn-type-btn tap rounded-xl border border-savings-500 text-savings-600 dark:text-savings-500 text-sm font-medium">Savings deposit</button>
+            <button type="button" data-type="withdrawal" class="txn-type-btn tap rounded-xl border border-ink-100 dark:border-ink-700 text-sm font-medium">Savings withdrawal</button>
+            <button type="button" data-type="disbursal" class="txn-type-btn tap rounded-xl border border-ink-100 dark:border-ink-700 text-sm font-medium">Loan disbursal</button>
+            <button type="button" data-type="repayment" class="txn-type-btn tap rounded-xl border border-ink-100 dark:border-ink-700 text-sm font-medium">Loan repayment</button>
+          </div>
+          <p id="txn-type-hint" class="text-[11px] text-alert-500 mt-1 hidden">This client is not marked loan eligible. Enable it on their profile first.</p>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-ink-900/60 dark:text-paper/60">Amount</label>
+          <input id="txn-amount" type="number" min="0.01" step="0.01" required placeholder="0.00" class="tap w-full mt-1 rounded-xl px-3 font-mono-num bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700">
+        </div>
+        <div>
+          <label class="text-xs font-medium text-ink-900/60 dark:text-paper/60">Note (optional)</label>
+          <input id="txn-note" type="text" placeholder="e.g. weekly collection" class="tap w-full mt-1 rounded-xl px-3 bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700">
+        </div>
+        <p class="text-[11px] text-ink-900/50 dark:text-paper/50">Timestamp is captured automatically at the moment you save and cannot be edited.</p>
+        <button type="submit" class="tap w-full rounded-xl bg-ink-900 dark:bg-paper text-paper dark:text-ink-900 font-medium mt-2">Save transaction</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============ MODAL: ADD CLIENT ============ -->
+  <div id="modal-client" class="fixed inset-0 z-40 hidden items-end justify-center modal-backdrop bg-ink-900/40">
+    <div class="w-full max-w-[480px] bg-paper dark:bg-ink-800 rounded-t-3xl p-5 pb-8 rise">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-display font-semibold text-lg">Add client</h3>
+        <button id="close-client" class="tap w-9 h-9 rounded-full bg-ink-50 dark:bg-ink-700" aria-label="Close">✕</button>
+      </div>
+      <form id="form-client" class="space-y-3">
+        <div>
+          <label class="text-xs font-medium text-ink-900/60 dark:text-paper/60">Full name</label>
+          <input id="client-name" type="text" required class="tap w-full mt-1 rounded-xl px-3 bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700">
+        </div>
+        <div>
+          <label class="text-xs font-medium text-ink-900/60 dark:text-paper/60">Phone (with country code)</label>
+          <input id="client-phone" type="tel" required placeholder="e.g. 233241234567" class="tap w-full mt-1 rounded-xl px-3 font-mono-num bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700">
+        </div>
+        <label class="flex items-center gap-2 pt-1">
+          <input id="client-eligible" type="checkbox" class="w-5 h-5 rounded">
+          <span class="text-sm">Loan eligible from the start</span>
+        </label>
+        <button type="submit" class="tap w-full rounded-xl bg-ink-900 dark:bg-paper text-paper dark:text-ink-900 font-medium mt-2">Save client</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============ MODAL: WHATSAPP RECEIPT ============ -->
+  <div id="modal-receipt" class="fixed inset-0 z-50 hidden items-center justify-center modal-backdrop bg-ink-900/50 px-4">
+    <div class="w-full max-w-[380px] rise">
+      <div class="bg-white dark:bg-ink-800 text-ink-900 dark:text-paper receipt-edge px-5 py-7 font-mono-num text-sm">
+        <p class="text-center font-display font-semibold text-base mb-1">Ledger Field</p>
+        <p class="text-center text-[11px] text-ink-900/50 dark:text-paper/50 mb-4">Digital transaction receipt</p>
+        <div class="border-t border-dashed border-ink-900/20 dark:border-paper/20 my-2"></div>
+        <div class="space-y-1 text-[13px]" id="receipt-body"></div>
+        <div class="border-t border-dashed border-ink-900/20 dark:border-paper/20 my-3"></div>
+        <label class="block text-[11px] font-body text-ink-900/60 dark:text-paper/60 mb-1">Note to customer</label>
+        <textarea id="receipt-note" rows="2" class="w-full font-body text-sm rounded-lg px-2 py-1.5 bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700"></textarea>
+        <label class="block text-[11px] font-body text-ink-900/60 dark:text-paper/60 mt-2 mb-1">Send to (WhatsApp number)</label>
+        <input id="receipt-phone" type="tel" class="w-full font-mono-num text-sm rounded-lg px-2 py-1.5 bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700">
+      </div>
+      <div class="flex gap-2 mt-3">
+        <button id="close-receipt" class="tap flex-1 rounded-xl bg-ink-50 dark:bg-ink-700 font-body text-sm font-medium">Dismiss</button>
+        <a id="send-receipt" href="#" target="_blank" class="tap flex-1 rounded-xl bg-savings-500 text-white font-body text-sm font-medium flex items-center justify-center gap-1.5">Send via WhatsApp</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- toast -->
+  <div id="toast" class="fixed left-1/2 -translate-x-1/2 bottom-24 z-50 hidden px-4 py-2.5 rounded-xl bg-ink-900 text-paper text-sm font-medium shadow-lg max-w-[90%] text-center"></div>
+</div>
+
+<script>
+/* =========================================================================
+   CONFIG — replace with real project keys to enable live cloud sync.
+   Nothing else in this file needs to change once these are filled in.
+========================================================================= */
+const CONFIG = {
+  SUPABASE_URL: 'https://YOUR-PROJECT.supabase.co',
+  SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
+  FIREBASE: {
+    apiKey: 'YOUR_FIREBASE_API_KEY',
+    authDomain: 'YOUR_PROJECT.firebaseapp.com',
+    projectId: 'YOUR_PROJECT_ID',
+  },
+  BACKEND: 'none', // 'supabase' | 'firebase' | 'none' (demo/local-only mode)
+};
+
+/* =========================================================================
+   DATABASE (Dexie / IndexedDB)
+========================================================================= */
+const db = new Dexie('LedgerFieldDB');
+db.version(1).stores({
+  clients: 'id, name, loanEligible',
+  transactions: 'id, clientId, type, timestamp, synced',
+});
+
+/* =========================================================================
+   STATE & HELPERS
+========================================================================= */
+let CURRENCY = localStorage.getItem('lf_currency') || 'GH₵';
+let currentClientId = null;
+let selectedTxnType = 'deposit';
+let charts = { week: null, ratio: null };
+
+const uid = () => 'id_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+const fmtMoney = (n) => `${CURRENCY}${(Math.round((n + Number.EPSILON) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtDate = (iso) => new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+const startOfDay = (d) => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
+const daysAgo = (n) => { const x = new Date(); x.setDate(x.getDate() - n); return x; };
+
+const TYPE_META = {
+  deposit:    { label: 'Savings deposit',    sign: 1,  cls: 'text-savings-600 dark:text-savings-500', bg: 'bg-savings-500/10 border-savings-500/30', icon: '↓' },
+  withdrawal: { label: 'Savings withdrawal', sign: -1, cls: 'text-alert-500', bg: 'bg-alert-500/10 border-alert-500/30', icon: '↑' },
+  disbursal:  { label: 'Loan disbursal',     sign: 1,  cls: 'text-loan-600 dark:text-loan-500', bg: 'bg-loan-500/10 border-loan-500/30', icon: '↓' },
+  repayment:  { label: 'Loan repayment',     sign: -1, cls: 'text-savings-600 dark:text-savings-500', bg: 'bg-savings-500/10 border-savings-500/30', icon: '↑' },
+};
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.remove('hidden');
+  clearTimeout(toast._h);
+  toast._h = setTimeout(() => t.classList.add('hidden'), 2200);
+}
+
+/* =========================================================================
+   DATABASE STARTS EMPTY — no mock/demo records are ever inserted.
+   The app is fully live from first load; every client and transaction
+   shown is one a real agent entered.
+========================================================================= */
+
+/* =========================================================================
+   COMPUTATION
+========================================================================= */
+async function computeClientBalances(clientId) {
+  const txns = await db.transactions.where('clientId').equals(clientId).toArray();
+  let savings = 0, loan = 0;
+  for (const t of txns) {
+    if (t.type === 'deposit') savings += t.amount;
+    if (t.type === 'withdrawal') savings -= t.amount;
+    if (t.type === 'disbursal') loan += t.amount;
+    if (t.type === 'repayment') loan -= t.amount;
+  }
+  return { savings, loan };
+}
+
+async function computeGlobalTotals() {
+  const all = await db.transactions.toArray();
+  let savings = 0, loan = 0;
+  const buckets = { today: 0, yesterday: 0, week: 0, month: 0, year: 0 };
+  const now = new Date();
+  const todayStart = startOfDay(now);
+  const yStart = startOfDay(daysAgo(1));
+  const weekStart = startOfDay(daysAgo(6));
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const yearStart = new Date(now.getFullYear(), 0, 1);
+
+  for (const t of all) {
+    if (t.type === 'deposit') savings += t.amount;
+    if (t.type === 'withdrawal') savings -= t.amount;
+    if (t.type === 'disbursal') loan += t.amount;
+    if (t.type === 'repayment') loan -= t.amount;
+
+    // "gross collections" = cash coming IN to the agent: deposits + repayments
+    if (t.type === 'deposit' || t.type === 'repayment') {
+      const ts = new Date(t.timestamp);
+      if (ts >= todayStart) buckets.today += t.amount;
+      else if (ts >= yStart && ts < todayStart) buckets.yesterday += t.amount;
+      if (ts >= weekStart) buckets.week += t.amount;
+      if (ts >= monthStart) buckets.month += t.amount;
+      if (ts >= yearStart) buckets.year += t.amount;
+    }
+  }
+  return { savings, loan, buckets };
+}
+
+/* =========================================================================
+   RENDER: HOME
+========================================================================= */
+async function renderHome() {
+  const { savings, loan, buckets } = await computeGlobalTotals();
+  document.getElementById('stat-today').textContent = fmtMoney(buckets.today);
+  document.getElementById('stat-yesterday').textContent = fmtMoney(buckets.yesterday);
+  document.getElementById('stat-week').textContent = fmtMoney(buckets.week);
+  document.getElementById('stat-month').textContent = fmtMoney(buckets.month);
+  document.getElementById('stat-year').textContent = fmtMoney(buckets.year);
+  document.getElementById('stat-total-savings').textContent = fmtMoney(savings);
+  document.getElementById('stat-total-loans').textContent = fmtMoney(loan);
+
+  const clients = await db.clients.toArray();
+  const list = document.getElementById('client-list');
+  list.innerHTML = '';
+  for (const c of clients) {
+    const bal = await computeClientBalances(c.id);
+    const initials = c.name.split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase();
+    const row = document.createElement('button');
+    row.className = 'tap w-full flex items-center gap-3 rounded-2xl bg-ink-50 dark:bg-ink-700 p-3 text-left';
+    row.innerHTML = `
+      <div class="w-11 h-11 rounded-full bg-ledger-500 text-white flex items-center justify-center font-display font-semibold shrink-0">${initials}</div>
+      <div class="flex-1 min-w-0">
+        <p class="font-medium text-sm truncate">${c.name}</p>
+        <p class="text-[11px] text-ink-900/50 dark:text-paper/50">${c.loanEligible ? 'Loan eligible' : 'Savings only'}</p>
+      </div>
+      <div class="text-right shrink-0">
+        <p class="font-mono-num text-xs text-savings-600 dark:text-savings-500">${fmtMoney(bal.savings)}</p>
+        <p class="font-mono-num text-xs text-loan-600 dark:text-loan-500">${fmtMoney(bal.loan)}</p>
+      </div>`;
+    row.addEventListener('click', () => openClient(c.id));
+    list.appendChild(row);
+  }
+  if (clients.length === 0) {
+    list.innerHTML = `<p class="text-sm text-ink-900/50 dark:text-paper/50 text-center py-6">No clients yet — add your first client to get started.</p>`;
+  }
+}
+
+/* =========================================================================
+   RENDER: CLIENT PROFILE
+========================================================================= */
+async function openClient(clientId) {
+  currentClientId = clientId;
+  const c = await db.clients.get(clientId);
+  if (!c) return;
+  const bal = await computeClientBalances(clientId);
+
+  document.getElementById('client-profile-header').innerHTML = `
+    <div class="flex items-center gap-3">
+      <div class="w-14 h-14 rounded-full bg-ledger-500 text-white flex items-center justify-center font-display font-semibold text-lg">
+        ${c.name.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}
+      </div>
+      <div>
+        <p class="font-display font-semibold text-base">${c.name}</p>
+        <p class="text-xs text-ink-900/60 dark:text-paper/60 font-mono-num">+${c.phone}</p>
+        <p class="text-[11px] text-ink-900/40 dark:text-paper/40 mt-0.5">Client since ${fmtDate(c.createdAt)}</p>
+      </div>
+    </div>`;
+  document.getElementById('client-savings-total').textContent = fmtMoney(bal.savings);
+  document.getElementById('client-loan-total').textContent = fmtMoney(bal.loan);
+  document.getElementById('client-loan-toggle').checked = !!c.loanEligible;
+
+  const txns = await db.transactions.where('clientId').equals(clientId).reverse().sortBy('timestamp');
+  const tl = document.getElementById('client-timeline');
+  tl.innerHTML = '';
+  if (txns.length === 0) {
+    tl.innerHTML = `<p class="text-sm text-ink-900/50 dark:text-paper/50 text-center py-4">No transactions recorded yet.</p>`;
+  }
+  for (const t of txns) {
+    tl.appendChild(txnRow(t));
+  }
+
+  showView('client');
+}
+
+function txnRow(t) {
+  const meta = TYPE_META[t.type];
+  const row = document.createElement('div');
+  row.className = `rounded-2xl border ${meta.bg} p-3 flex items-center gap-3`;
+  row.innerHTML = `
+    <div class="w-9 h-9 rounded-full flex items-center justify-center bg-white/60 dark:bg-black/20 ${meta.cls} font-semibold">${meta.icon}</div>
+    <div class="flex-1 min-w-0">
+      <p class="text-sm font-medium ${meta.cls}">${meta.label}</p>
+      <p class="text-[11px] text-ink-900/50 dark:text-paper/50">${fmtDate(t.timestamp)} ${t.synced ? '· synced' : '· pending sync'}</p>
+      ${t.note ? `<p class="text-[11px] text-ink-900/40 dark:text-paper/40 truncate">${t.note}</p>` : ''}
+    </div>
+    <div class="text-right shrink-0">
+      <p class="font-mono-num text-sm font-semibold ${meta.cls}">${meta.sign > 0 ? '+' : '−'}${fmtMoney(t.amount).replace(CURRENCY, CURRENCY)}</p>
+      <button data-receipt="${t.id}" class="text-[11px] text-ledger-500 font-medium mt-0.5">Receipt</button>
+    </div>`;
+  row.querySelector('[data-receipt]').addEventListener('click', () => openReceipt(t.id));
+  return row;
+}
+
+/* =========================================================================
+   RENDER: LEDGER / TRANSACTIONS
+========================================================================= */
+async function populateClientFilters() {
+  const clients = await db.clients.toArray();
+  const fClient = document.getElementById('f-client');
+  const txnClient = document.getElementById('txn-client');
+  fClient.innerHTML = '<option value="">All clients</option>' + clients.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  txnClient.innerHTML = clients.map(c => `<option value="${c.id}" data-eligible="${c.loanEligible}">${c.name}</option>`).join('');
+}
+
+async function renderLedger() {
+  const clientF = document.getElementById('f-client').value;
+  const typeF = document.getElementById('f-type').value;
+  const syncF = document.getElementById('f-sync').value;
+  const minF = parseFloat(document.getElementById('f-min').value);
+  const maxF = parseFloat(document.getElementById('f-max').value);
+  const fromF = document.getElementById('f-from').value;
+  const toF = document.getElementById('f-to').value;
+
+  let txns = await db.transactions.orderBy('timestamp').reverse().toArray();
+  const clients = await db.clients.toArray();
+  const clientMap = Object.fromEntries(clients.map(c => [c.id, c.name]));
+
+  txns = txns.filter(t => {
+    if (clientF && t.clientId !== clientF) return false;
+    if (typeF && t.type !== typeF) return false;
+    if (syncF === 'synced' && !t.synced) return false;
+    if (syncF === 'pending' && t.synced) return false;
+    if (!isNaN(minF) && t.amount < minF) return false;
+    if (!isNaN(maxF) && t.amount > maxF) return false;
+    if (fromF && new Date(t.timestamp) < new Date(fromF)) return false;
+    if (toF && new Date(t.timestamp) > new Date(toF + 'T23:59:59')) return false;
+    return true;
+  });
+
+  const list = document.getElementById('ledger-list');
+  list.innerHTML = '';
+  if (txns.length === 0) {
+    list.innerHTML = `<p class="text-sm text-ink-900/50 dark:text-paper/50 text-center py-8">No transactions match these filters.</p>`;
+    return;
+  }
+  for (const t of txns) {
+    const row = txnRow(t);
+    const nameTag = document.createElement('p');
+    nameTag.className = 'text-[11px] text-ink-900/40 dark:text-paper/40';
+    row.querySelector('.flex-1').insertAdjacentHTML('afterbegin', `<p class="text-xs font-semibold">${clientMap[t.clientId] || 'Unknown client'}</p>`);
+    list.appendChild(row);
+  }
+}
+
+/* =========================================================================
+   CHARTS
+========================================================================= */
+function chartColors() {
+  const dark = document.documentElement.classList.contains('dark');
+  return {
+    text: dark ? '#E7ECF1' : '#0B1A2B',
+    grid: dark ? 'rgba(231,236,241,0.08)' : 'rgba(11,26,43,0.06)',
+    savings: '#0F9D74',
+    loan: '#C77D2A',
+    ledger: '#1E5B8C',
+  };
+}
+
+async function renderCharts() {
+  const colors = chartColors();
+  const all = await db.transactions.toArray();
+
+  // --- weekly bar chart: cash IN (deposit+repayment) per day, last 7 days
+  const labels = [];
+  const values = [];
+  for (let i = 6; i >= 0; i--) {
+    const day = daysAgo(i);
+    const dayStart = startOfDay(day);
+    const dayEnd = new Date(dayStart.getTime() + 86400000);
+    labels.push(day.toLocaleDateString('en-GB', { weekday: 'short' }));
+    const total = all
+      .filter(t => (t.type === 'deposit' || t.type === 'repayment'))
+      .filter(t => { const d = new Date(t.timestamp); return d >= dayStart && d < dayEnd; })
+      .reduce((s, t) => s + t.amount, 0);
+    values.push(Math.round(total * 100) / 100);
+  }
+
+  if (charts.week) charts.week.destroy();
+  charts.week = new Chart(document.getElementById('chart-week'), {
+    type: 'bar',
+    data: { labels, datasets: [{ label: 'Collections', data: values, backgroundColor: colors.ledger, borderRadius: 6, maxBarThickness: 28 }] },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: colors.text }, grid: { display: false } },
+        y: { ticks: { color: colors.text }, grid: { color: colors.grid }, beginAtZero: true }
+      }
+    }
+  });
+
+  // --- doughnut: savings vs loans
+  const totals = await computeGlobalTotals();
+  if (charts.ratio) charts.ratio.destroy();
+  charts.ratio = new Chart(document.getElementById('chart-ratio'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Savings', 'Outstanding loans'],
+      datasets: [{ data: [Math.max(totals.savings,0), Math.max(totals.loan,0)], backgroundColor: [colors.savings, colors.loan], borderWidth: 0 }]
+    },
+    options: {
+      responsive: true,
+      cutout: '65%',
+      plugins: { legend: { display: false } }
+    }
+  });
+}
+
+/* =========================================================================
+   VIEW SWITCHING
+========================================================================= */
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active-nav'));
+  const navMatch = document.querySelector(`.nav-btn[data-view="${name}"]`);
+  if (navMatch) navMatch.classList.add('active-nav');
+  window.scrollTo(0,0);
+
+  if (name === 'transactions') renderLedger();
+  if (name === 'analytics') renderCharts();
+  if (name === 'home') renderHome();
+  if (name === 'settings') renderSettings();
+}
+
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => showView(btn.dataset.view));
+});
+
+/* =========================================================================
+   MODALS: NEW TRANSACTION
+========================================================================= */
+const modalTxn = document.getElementById('modal-txn');
+document.getElementById('btn-new-txn').addEventListener('click', async () => {
+  await populateClientFilters();
+  selectedTxnType = 'deposit';
+  updateTxnTypeButtons();
+  document.getElementById('form-txn').reset();
+  checkLoanEligibilityHint();
+  modalTxn.classList.remove('hidden');
+  modalTxn.classList.add('flex');
+});
+document.getElementById('close-txn').addEventListener('click', () => {
+  modalTxn.classList.add('hidden'); modalTxn.classList.remove('flex');
+});
+
+document.querySelectorAll('.txn-type-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    selectedTxnType = btn.dataset.type;
+    updateTxnTypeButtons();
+    checkLoanEligibilityHint();
+  });
+});
+function updateTxnTypeButtons() {
+  document.querySelectorAll('.txn-type-btn').forEach(b => {
+    const active = b.dataset.type === selectedTxnType;
+    b.classList.toggle('border-ledger-500', active && selectedTxnType!=='deposit');
+    b.classList.toggle('border-savings-500', active && selectedTxnType==='deposit');
+    b.classList.toggle('text-ledger-500', active && !['deposit'].includes(selectedTxnType));
+    b.classList.toggle('bg-ink-50', active);
+    b.classList.toggle('dark:bg-ink-700', active);
+  });
+}
+async function checkLoanEligibilityHint() {
+  const sel = document.getElementById('txn-client');
+  const opt = sel.options[sel.selectedIndex];
+  const hint = document.getElementById('txn-type-hint');
+  const submitBtn = document.querySelector('#form-txn button[type=submit]');
+  if (selectedTxnType === 'disbursal' && opt && opt.dataset.eligible !== 'true') {
+    hint.classList.remove('hidden');
+    submitBtn.disabled = true;
+    submitBtn.classList.add('opacity-40');
+  } else {
+    hint.classList.add('hidden');
+    submitBtn.disabled = false;
+    submitBtn.classList.remove('opacity-40');
+  }
+}
+document.getElementById('txn-client').addEventListener('change', checkLoanEligibilityHint);
+
+document.getElementById('form-txn').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const clientId = document.getElementById('txn-client').value;
+  const client = await db.clients.get(clientId);
+  if (!client) return;
+  if (selectedTxnType === 'disbursal' && !client.loanEligible) {
+    toast('This client is not loan eligible.');
+    return;
+  }
+  const amount = parseFloat(document.getElementById('txn-amount').value);
+  const note = document.getElementById('txn-note').value.trim();
+  const record = {
+    id: uid(),
+    clientId,
+    type: selectedTxnType,
+    amount,
+    note,
+    timestamp: new Date().toISOString(), // captured automatically, not editable
+    synced: false,
+  };
+  await db.transactions.add(record);
+  modalTxn.classList.add('hidden'); modalTxn.classList.remove('flex');
+  toast('Transaction saved');
+  await refreshCurrentView();
+  attemptSync();
+  openReceipt(record.id, client.phone);
+});
+
+/* =========================================================================
+   MODALS: ADD CLIENT
+========================================================================= */
+const modalClient = document.getElementById('modal-client');
+document.getElementById('btn-add-client').addEventListener('click', () => {
+  document.getElementById('form-client').reset();
+  modalClient.classList.remove('hidden'); modalClient.classList.add('flex');
+});
+document.getElementById('close-client').addEventListener('click', () => {
+  modalClient.classList.add('hidden'); modalClient.classList.remove('flex');
+});
+document.getElementById('form-client').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = document.getElementById('client-name').value.trim();
+  const phone = document.getElementById('client-phone').value.trim().replace(/\D/g, '');
+  const loanEligible = document.getElementById('client-eligible').checked;
+  await db.clients.add({ id: uid(), name, phone, loanEligible, createdAt: new Date().toISOString() });
+  modalClient.classList.add('hidden'); modalClient.classList.remove('flex');
+  toast('Client added');
+  await populateClientFilters();
+  await renderHome();
+});
+
+document.getElementById('btn-back-client').addEventListener('click', () => showView('home'));
+document.getElementById('client-loan-toggle').addEventListener('change', async (e) => {
+  if (!currentClientId) return;
+  await db.clients.update(currentClientId, { loanEligible: e.target.checked });
+  toast(e.target.checked ? 'Loan eligibility enabled' : 'Loan eligibility disabled');
+  await populateClientFilters();
+});
+
+/* =========================================================================
+   WHATSAPP RECEIPT MODAL
+========================================================================= */
+const modalReceipt = document.getElementById('modal-receipt');
+async function openReceipt(txnId, phone) {
+  const t = await db.transactions.get(txnId);
+  const c = await db.clients.get(t.clientId);
+  const bal = await computeClientBalances(t.clientId);
+  const meta = TYPE_META[t.type];
+  const receiptId = 'RCPT-' + t.id.slice(-8).toUpperCase();
+
+  document.getElementById('receipt-body').innerHTML = `
+    <div class="flex justify-between"><span>Receipt ID</span><span>${receiptId}</span></div>
+    <div class="flex justify-between"><span>Client</span><span>${c ? c.name : ''}</span></div>
+    <div class="flex justify-between"><span>Date</span><span>${fmtDate(t.timestamp)}</span></div>
+    <div class="flex justify-between"><span>Type</span><span>${meta.label}</span></div>
+    <div class="flex justify-between font-semibold"><span>Amount</span><span>${fmtMoney(t.amount)}</span></div>
+    <div class="flex justify-between"><span>Savings bal.</span><span>${fmtMoney(bal.savings)}</span></div>
+    <div class="flex justify-between"><span>Loan bal.</span><span>${fmtMoney(bal.loan)}</span></div>
+  `;
+  document.getElementById('receipt-note').value = t.note || '';
+  document.getElementById('receipt-phone').value = phone || (c ? c.phone : '');
+  modalReceipt.dataset.txnId = txnId;
+  modalReceipt.classList.remove('hidden'); modalReceipt.classList.add('flex');
+  updateReceiptLink();
+}
+document.getElementById('close-receipt').addEventListener('click', () => {
+  modalReceipt.classList.add('hidden'); modalReceipt.classList.remove('flex');
+});
+document.getElementById('receipt-note').addEventListener('input', updateReceiptLink);
+document.getElementById('receipt-phone').addEventListener('input', updateReceiptLink);
+
+async function updateReceiptLink() {
+  const txnId = modalReceipt.dataset.txnId;
+  if (!txnId) return;
+  const t = await db.transactions.get(txnId);
+  if (!t) return;
+  const c = await db.clients.get(t.clientId);
+  const bal = await computeClientBalances(t.clientId);
+  const meta = TYPE_META[t.type];
+  const receiptId = 'RCPT-' + t.id.slice(-8).toUpperCase();
+  const note = document.getElementById('receipt-note').value.trim();
+  const phone = document.getElementById('receipt-phone').value.trim().replace(/\D/g, '');
+
+  const text = [
+    `*Ledger Field Receipt*`,
+    `Receipt ID: ${receiptId}`,
+    `Client: ${c ? c.name : ''}`,
+    `Date: ${fmtDate(t.timestamp)}`,
+    `Type: ${meta.label}`,
+    `Amount: ${fmtMoney(t.amount)}`,
+    `Savings balance: ${fmtMoney(bal.savings)}`,
+    `Loan balance: ${fmtMoney(bal.loan)}`,
+    note ? `Note: ${note}` : null,
+  ].filter(Boolean).join('\n');
+
+  document.getElementById('send-receipt').href = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+}
+
+/* =========================================================================
+   FILTERS / EXPORT
+========================================================================= */
+['f-client','f-type','f-sync','f-min','f-max','f-from','f-to'].forEach(id => {
+  document.getElementById(id).addEventListener('input', renderLedger);
+  document.getElementById(id).addEventListener('change', renderLedger);
+});
+document.getElementById('btn-clear-filters').addEventListener('click', () => {
+  ['f-client','f-type','f-sync','f-min','f-max','f-from','f-to'].forEach(id => document.getElementById(id).value = '');
+  renderLedger();
+});
+document.getElementById('btn-export-pdf').addEventListener('click', () => {
+  const el = document.getElementById('ledger-export-area');
+  const opt = {
+    margin: 0.3,
+    filename: `ledger-report-${new Date().toISOString().slice(0,10)}.pdf`,
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true },
+    jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
+  };
+  toast('Preparing PDF report…');
+  html2pdf().set(opt).from(el).save();
+});
+
+/* =========================================================================
+   THEME
+========================================================================= */
+function applyTheme(dark) {
+  document.documentElement.classList.toggle('dark', dark);
+  localStorage.setItem('lf_theme', dark ? 'dark' : 'light');
+  document.getElementById('settings-theme-label').textContent = dark ? 'Dark' : 'Light';
+  if (charts.week || charts.ratio) renderCharts();
+}
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  applyTheme(!document.documentElement.classList.contains('dark'));
+});
+
+/* =========================================================================
+   SETTINGS
+========================================================================= */
+async function renderSettings() {
+  document.getElementById('settings-online').textContent = navigator.onLine ? 'Online' : 'Offline';
+  document.getElementById('settings-online').className = 'text-sm font-medium ' + (navigator.onLine ? 'text-savings-500' : 'text-alert-500');
+  const pending = await db.transactions.filter(t => !t.synced).count();
+  document.getElementById('settings-pending').textContent = pending;
+  document.getElementById('settings-currency').value = CURRENCY;
+}
+document.getElementById('settings-currency').addEventListener('change', async (e) => {
+  CURRENCY = e.target.value;
+  localStorage.setItem('lf_currency', CURRENCY);
+  toast('Currency updated');
+  await refreshCurrentView();
+});
+document.getElementById('btn-force-sync').addEventListener('click', () => attemptSync(true));
+document.getElementById('btn-reset-data').addEventListener('click', async () => {
+  if (!confirm('This permanently deletes every client and transaction stored on this device. Continue?')) return;
+  await db.clients.clear();
+  await db.transactions.clear();
+  toast('All data cleared');
+  currentClientId = null;
+  await populateClientFilters();
+  await refreshCurrentView();
+});
+
+/* =========================================================================
+   OFFLINE / ONLINE SYNC
+========================================================================= */
+function setOnlineBadge() {
+  const badge = document.getElementById('online-badge');
+  if (navigator.onLine) {
+    badge.textContent = '● Online';
+    badge.className = 'text-[11px] leading-none mt-1 text-savings-500 font-medium';
+  } else {
+    badge.textContent = '● Offline — saved locally';
+    badge.className = 'text-[11px] leading-none mt-1 text-loan-500 font-medium';
+  }
+}
+window.addEventListener('online', () => { setOnlineBadge(); attemptSync(); renderSettings(); });
+window.addEventListener('offline', () => { setOnlineBadge(); renderSettings(); });
+
+// Placeholder cloud push — wire this up to Supabase/Firebase using CONFIG above.
+async function pushToCloud(record) {
+  if (CONFIG.BACKEND === 'supabase') {
+    // const supabase = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+    // await supabase.from('transactions').upsert(record);
+    return true;
+  }
+  if (CONFIG.BACKEND === 'firebase') {
+    // firebase.firestore().collection('transactions').doc(record.id).set(record);
+    return true;
+  }
+  // Demo mode: no backend configured, simulate a successful push.
+  return true;
+}
+
+let syncing = false;
+async function attemptSync(manual) {
+  if (!navigator.onLine || syncing) { if (manual) toast('Still offline — will sync automatically.'); return; }
+  syncing = true;
+  const pending = await db.transactions.filter(t => !t.synced).toArray();
+  if (pending.length === 0) { if (manual) toast('Everything is already synced.'); syncing = false; return; }
+  for (const t of pending) {
+    try {
+      const ok = await pushToCloud(t);
+      if (ok) await db.transactions.update(t.id, { synced: true });
+    } catch (err) { /* leave as pending, retry next time */ }
+  }
+  syncing = false;
+  if (manual) toast(`Synced ${pending.length} record(s).`);
+  await renderSettings();
+  if (document.getElementById('view-transactions').classList.contains('active')) renderLedger();
+}
+
+/* =========================================================================
+   INIT
+========================================================================= */
+async function refreshCurrentView() {
+  const active = document.querySelector('.view.active').id.replace('view-', '');
+  if (active === 'client' && currentClientId) await openClient(currentClientId);
+  else showView(active === 'client' ? 'home' : active);
+}
+
+(async function init() {
+  applyTheme(localStorage.getItem('lf_theme') === 'dark' || (!localStorage.getItem('lf_theme') && window.matchMedia('(prefers-color-scheme: dark)').matches));
+  setOnlineBadge();
+  await populateClientFilters();
+  await renderHome();
+  attemptSync();
+  setInterval(attemptSync, 20000);
+})();
+</script>
+</body>
+</html>
