@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -23,13 +24,13 @@
 <!-- html2pdf.js -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
-<!-- ================= Backend SDK placeholders (Supabase / Firebase) =================
-     Swap the CDN comment blocks below for whichever backend you use, then fill in
-     the CONFIG constants near the top of the main script. Nothing else in this file
-     needs to change — pushToCloud() already reads from CONFIG. -->
-<!-- <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script> -->
-<!-- <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script> -->
-<!-- <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script> -->
+<!-- ================= Cloud sync (Supabase) =================
+     This SDK powers real, live, multi-device sync: changes made on one phone
+     appear on every other device signed into the same project within a second
+     or two. It only activates once you paste your own project URL and anon
+     key into CONFIG near the top of the main script — see the Settings tab
+     in the app for the exact 2-minute setup steps and the SQL to run once. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
 <script>
   tailwind.config = {
@@ -198,7 +199,10 @@
 
     <!-- ---------- CLIENT PROFILE ---------- -->
     <section id="view-client" class="view px-4 pt-4 space-y-4">
-      <button id="btn-back-client" class="text-sm text-ledger-500 font-medium">&larr; Back</button>
+      <div class="flex items-center justify-between">
+        <button id="btn-back-client" class="text-sm text-ledger-500 font-medium">&larr; Back</button>
+        <button id="btn-edit-client" class="text-sm text-ledger-500 font-medium">Edit profile</button>
+      </div>
       <div id="client-profile-header" class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4"></div>
       <div class="grid grid-cols-2 gap-3">
         <div class="rounded-2xl border border-savings-500/30 bg-savings-500/10 p-4">
@@ -303,12 +307,44 @@
         <button id="btn-force-sync" class="tap w-full rounded-xl bg-ledger-500 text-white text-sm font-medium">Sync now</button>
       </div>
       <div class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4 space-y-2">
-        <p class="text-sm font-medium">Cloud backend</p>
-        <p class="text-xs text-ink-900/60 dark:text-paper/60 leading-relaxed">
-          Connected via placeholder credentials. Replace <span class="font-mono-num">CONFIG.SUPABASE_URL</span>,
-          <span class="font-mono-num">CONFIG.SUPABASE_ANON_KEY</span> (or the Firebase config object) near the top
-          of the script tag with your real project keys to enable live sync.
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium">Multi-device sync</p>
+          <span id="settings-cloud-status" class="text-xs font-medium px-2 py-0.5 rounded-full bg-alert-500/10 text-alert-500">Not connected</span>
+        </div>
+        <p id="settings-cloud-desc" class="text-xs text-ink-900/60 dark:text-paper/60 leading-relaxed">
+          Not connected yet, so data only lives on this device. Connect a free Supabase project once and every
+          device signed into it — phone, tablet, desktop — will see the same clients and transactions live.
         </p>
+        <details class="text-xs text-ink-900/60 dark:text-paper/60 leading-relaxed">
+          <summary class="cursor-pointer font-medium text-ledger-500">How to connect (2 minutes)</summary>
+          <ol class="list-decimal list-inside space-y-1 mt-2">
+            <li>Create a free project at <span class="font-mono-num">supabase.com</span>.</li>
+            <li>In the SQL editor, run the snippet below once.</li>
+            <li>Copy your Project URL and anon public key from Project Settings → API.</li>
+            <li>Paste them into <span class="font-mono-num">CONFIG.SUPABASE_URL</span> and <span class="font-mono-num">CONFIG.SUPABASE_ANON_KEY</span> near the top of the script tag in this file, save, and re-open the app on every device.</li>
+          </ol>
+          <pre class="mt-2 bg-ink-900 text-paper text-[10px] rounded-lg p-3 overflow-x-auto font-mono-num leading-relaxed">create table clients (
+  id text primary key,
+  name text,
+  phone text,
+  photo text,
+  loan_eligible boolean default false,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create table transactions (
+  id text primary key,
+  client_id text references clients(id) on delete cascade,
+  type text, amount numeric, note text,
+  timestamp timestamptz, updated_at timestamptz default now()
+);
+alter table clients enable row level security;
+alter table transactions enable row level security;
+create policy "field agent access" on clients for all using (true) with check (true);
+create policy "field agent access" on transactions for all using (true) with check (true);
+alter publication supabase_realtime add table clients, transactions;</pre>
+          <p class="mt-2">These policies allow anyone with your anon key to read/write — fine for a small trusted team, but add real authentication before wider rollout.</p>
+        </details>
       </div>
       <div class="rounded-2xl bg-ink-50 dark:bg-ink-700 p-4 space-y-2">
         <p class="text-sm font-medium">Currency</p>
@@ -388,14 +424,22 @@
     </div>
   </div>
 
-  <!-- ============ MODAL: ADD CLIENT ============ -->
+  <!-- ============ MODAL: ADD / EDIT CLIENT ============ -->
   <div id="modal-client" class="fixed inset-0 z-40 hidden items-end justify-center modal-backdrop bg-ink-900/40">
-    <div class="w-full max-w-[480px] bg-paper dark:bg-ink-800 rounded-t-3xl p-5 pb-8 rise">
+    <div class="w-full max-w-[480px] bg-paper dark:bg-ink-800 rounded-t-3xl p-5 pb-8 rise max-h-[90vh] overflow-y-auto">
       <div class="flex items-center justify-between mb-4">
-        <h3 class="font-display font-semibold text-lg">Add client</h3>
+        <h3 id="client-modal-title" class="font-display font-semibold text-lg">Add client</h3>
         <button id="close-client" class="tap w-9 h-9 rounded-full bg-ink-50 dark:bg-ink-700" aria-label="Close">✕</button>
       </div>
       <form id="form-client" class="space-y-3">
+        <div class="flex items-center gap-3">
+          <div id="client-photo-preview" class="w-16 h-16 rounded-full bg-ink-50 dark:bg-ink-700 flex items-center justify-center text-ink-900/30 dark:text-paper/30 text-2xl shrink-0 overflow-hidden">📷</div>
+          <div class="flex-1">
+            <label class="text-xs font-medium text-ink-900/60 dark:text-paper/60">Photo (optional)</label>
+            <input id="client-photo-input" type="file" accept="image/*" capture="environment" class="tap w-full mt-1 text-xs file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-ink-100 dark:file:bg-ink-800 file:text-xs">
+            <button type="button" id="client-photo-remove" class="text-[11px] text-alert-500 mt-1 hidden">Remove photo</button>
+          </div>
+        </div>
         <div>
           <label class="text-xs font-medium text-ink-900/60 dark:text-paper/60">Full name</label>
           <input id="client-name" type="text" required class="tap w-full mt-1 rounded-xl px-3 bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700">
@@ -408,7 +452,7 @@
           <input id="client-eligible" type="checkbox" class="w-5 h-5 rounded">
           <span class="text-sm">Loan eligible from the start</span>
         </label>
-        <button type="submit" class="tap w-full rounded-xl bg-ink-900 dark:bg-paper text-paper dark:text-ink-900 font-medium mt-2">Save client</button>
+        <button type="submit" id="client-form-submit" class="tap w-full rounded-xl bg-ink-900 dark:bg-paper text-paper dark:text-ink-900 font-medium mt-2">Save client</button>
       </form>
     </div>
   </div>
@@ -424,12 +468,13 @@
         <div class="border-t border-dashed border-ink-900/20 dark:border-paper/20 my-3"></div>
         <label class="block text-[11px] font-body text-ink-900/60 dark:text-paper/60 mb-1">Note to customer</label>
         <textarea id="receipt-note" rows="2" class="w-full font-body text-sm rounded-lg px-2 py-1.5 bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700"></textarea>
-        <label class="block text-[11px] font-body text-ink-900/60 dark:text-paper/60 mt-2 mb-1">Send to (WhatsApp number)</label>
-        <input id="receipt-phone" type="tel" class="w-full font-mono-num text-sm rounded-lg px-2 py-1.5 bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700">
+        <label class="block text-[11px] font-body text-ink-900/60 dark:text-paper/60 mt-2 mb-1">Send to (WhatsApp number, with country code)</label>
+        <input id="receipt-phone" type="tel" placeholder="e.g. 233241234567" class="w-full font-mono-num text-sm rounded-lg px-2 py-1.5 bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700">
+        <p id="receipt-phone-hint" class="text-[11px] font-body text-alert-500 mt-1 hidden">Add a full number with country code (no + or spaces needed) to enable sending.</p>
       </div>
       <div class="flex gap-2 mt-3">
         <button id="close-receipt" class="tap flex-1 rounded-xl bg-ink-50 dark:bg-ink-700 font-body text-sm font-medium">Dismiss</button>
-        <a id="send-receipt" href="#" target="_blank" class="tap flex-1 rounded-xl bg-savings-500 text-white font-body text-sm font-medium flex items-center justify-center gap-1.5">Send via WhatsApp</a>
+        <a id="send-receipt" href="#" target="_blank" rel="noopener noreferrer" class="tap flex-1 rounded-xl bg-savings-500 text-white font-body text-sm font-medium flex items-center justify-center gap-1.5">Send via WhatsApp</a>
       </div>
     </div>
   </div>
@@ -446,13 +491,14 @@
 const CONFIG = {
   SUPABASE_URL: 'https://YOUR-PROJECT.supabase.co',
   SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY',
-  FIREBASE: {
-    apiKey: 'YOUR_FIREBASE_API_KEY',
-    authDomain: 'YOUR_PROJECT.firebaseapp.com',
-    projectId: 'YOUR_PROJECT_ID',
-  },
-  BACKEND: 'none', // 'supabase' | 'firebase' | 'none' (demo/local-only mode)
 };
+// True once real keys have been pasted in above (see Settings tab for setup steps).
+function isCloudConfigured() {
+  return !!CONFIG.SUPABASE_URL && !!CONFIG.SUPABASE_ANON_KEY
+    && !CONFIG.SUPABASE_URL.includes('YOUR-PROJECT')
+    && !CONFIG.SUPABASE_ANON_KEY.includes('YOUR_SUPABASE_ANON_KEY');
+}
+let supabaseClient = null;
 
 /* =========================================================================
    DATABASE (Dexie / IndexedDB)
@@ -460,6 +506,10 @@ const CONFIG = {
 const db = new Dexie('LedgerFieldDB');
 db.version(1).stores({
   clients: 'id, name, loanEligible',
+  transactions: 'id, clientId, type, timestamp, synced',
+});
+db.version(2).stores({
+  clients: 'id, name, loanEligible, synced',
   transactions: 'id, clientId, type, timestamp, synced',
 });
 
@@ -562,10 +612,13 @@ async function renderHome() {
   for (const c of clients) {
     const bal = await computeClientBalances(c.id);
     const initials = c.name.split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase();
+    const avatar = c.photo
+      ? `<img src="${c.photo}" class="w-11 h-11 rounded-full object-cover shrink-0">`
+      : `<div class="w-11 h-11 rounded-full bg-ledger-500 text-white flex items-center justify-center font-display font-semibold shrink-0">${initials}</div>`;
     const row = document.createElement('button');
     row.className = 'tap w-full flex items-center gap-3 rounded-2xl bg-ink-50 dark:bg-ink-700 p-3 text-left';
     row.innerHTML = `
-      <div class="w-11 h-11 rounded-full bg-ledger-500 text-white flex items-center justify-center font-display font-semibold shrink-0">${initials}</div>
+      ${avatar}
       <div class="flex-1 min-w-0">
         <p class="font-medium text-sm truncate">${c.name}</p>
         <p class="text-[11px] text-ink-900/50 dark:text-paper/50">${c.loanEligible ? 'Loan eligible' : 'Savings only'}</p>
@@ -591,11 +644,12 @@ async function openClient(clientId) {
   if (!c) return;
   const bal = await computeClientBalances(clientId);
 
+  const profileAvatar = c.photo
+    ? `<img src="${c.photo}" class="w-14 h-14 rounded-full object-cover">`
+    : `<div class="w-14 h-14 rounded-full bg-ledger-500 text-white flex items-center justify-center font-display font-semibold text-lg">${c.name.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}</div>`;
   document.getElementById('client-profile-header').innerHTML = `
     <div class="flex items-center gap-3">
-      <div class="w-14 h-14 rounded-full bg-ledger-500 text-white flex items-center justify-center font-display font-semibold text-lg">
-        ${c.name.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}
-      </div>
+      ${profileAvatar}
       <div>
         <p class="font-display font-semibold text-base">${c.name}</p>
         <p class="text-xs text-ink-900/60 dark:text-paper/60 font-mono-num">+${c.phone}</p>
@@ -836,13 +890,15 @@ document.getElementById('form-txn').addEventListener('submit', async (e) => {
   }
   const amount = parseFloat(document.getElementById('txn-amount').value);
   const note = document.getElementById('txn-note').value.trim();
+  const now = new Date().toISOString();
   const record = {
     id: uid(),
     clientId,
     type: selectedTxnType,
     amount,
     note,
-    timestamp: new Date().toISOString(), // captured automatically, not editable
+    timestamp: now, // captured automatically, not editable
+    updatedAt: now,
     synced: false,
   };
   await db.transactions.add(record);
@@ -854,11 +910,87 @@ document.getElementById('form-txn').addEventListener('submit', async (e) => {
 });
 
 /* =========================================================================
-   MODALS: ADD CLIENT
+   MODALS: ADD / EDIT CLIENT (with optional photo)
 ========================================================================= */
 const modalClient = document.getElementById('modal-client');
+let editingClientId = null;
+let pendingPhoto = undefined; // undefined = unchanged, null = removed, dataURL = new photo
+
+function resetClientPhotoUI(existingPhoto) {
+  pendingPhoto = undefined;
+  const preview = document.getElementById('client-photo-preview');
+  const removeBtn = document.getElementById('client-photo-remove');
+  document.getElementById('client-photo-input').value = '';
+  if (existingPhoto) {
+    preview.innerHTML = `<img src="${existingPhoto}" class="w-full h-full object-cover">`;
+    removeBtn.classList.remove('hidden');
+  } else {
+    preview.innerHTML = '📷';
+    removeBtn.classList.add('hidden');
+  }
+}
+
+// Resize/compress any chosen photo client-side so local + cloud storage stays small.
+function readAndCompressImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read image'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 320;
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.72));
+      };
+      img.onerror = () => reject(new Error('Could not load image'));
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+document.getElementById('client-photo-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    pendingPhoto = await readAndCompressImage(file);
+    document.getElementById('client-photo-preview').innerHTML = `<img src="${pendingPhoto}" class="w-full h-full object-cover">`;
+    document.getElementById('client-photo-remove').classList.remove('hidden');
+  } catch (err) {
+    toast('Could not use that image');
+  }
+});
+document.getElementById('client-photo-remove').addEventListener('click', () => {
+  pendingPhoto = null;
+  document.getElementById('client-photo-preview').innerHTML = '📷';
+  document.getElementById('client-photo-input').value = '';
+  document.getElementById('client-photo-remove').classList.add('hidden');
+});
+
 document.getElementById('btn-add-client').addEventListener('click', () => {
+  editingClientId = null;
+  document.getElementById('client-modal-title').textContent = 'Add client';
+  document.getElementById('client-form-submit').textContent = 'Save client';
   document.getElementById('form-client').reset();
+  resetClientPhotoUI(null);
+  modalClient.classList.remove('hidden'); modalClient.classList.add('flex');
+});
+document.getElementById('btn-edit-client').addEventListener('click', async () => {
+  if (!currentClientId) return;
+  const c = await db.clients.get(currentClientId);
+  if (!c) return;
+  editingClientId = c.id;
+  document.getElementById('client-modal-title').textContent = 'Edit client';
+  document.getElementById('client-form-submit').textContent = 'Save changes';
+  document.getElementById('client-name').value = c.name;
+  document.getElementById('client-phone').value = c.phone || '';
+  document.getElementById('client-eligible').checked = !!c.loanEligible;
+  resetClientPhotoUI(c.photo || null);
   modalClient.classList.remove('hidden'); modalClient.classList.add('flex');
 });
 document.getElementById('close-client').addEventListener('click', () => {
@@ -869,31 +1001,51 @@ document.getElementById('form-client').addEventListener('submit', async (e) => {
   const name = document.getElementById('client-name').value.trim();
   const phone = document.getElementById('client-phone').value.trim().replace(/\D/g, '');
   const loanEligible = document.getElementById('client-eligible').checked;
-  await db.clients.add({ id: uid(), name, phone, loanEligible, createdAt: new Date().toISOString() });
+  const now = new Date().toISOString();
+
+  if (editingClientId) {
+    const patch = { name, phone, loanEligible, updatedAt: now, synced: false };
+    if (pendingPhoto !== undefined) patch.photo = pendingPhoto; // null clears it, dataURL sets it
+    await db.clients.update(editingClientId, patch);
+    toast('Client updated');
+  } else {
+    await db.clients.add({
+      id: uid(), name, phone, loanEligible,
+      photo: pendingPhoto || null,
+      createdAt: now, updatedAt: now, synced: false,
+    });
+    toast('Client added');
+  }
   modalClient.classList.add('hidden'); modalClient.classList.remove('flex');
-  toast('Client added');
   await populateClientFilters();
-  await renderHome();
+  await refreshCurrentView();
+  attemptSync();
 });
 
 document.getElementById('btn-back-client').addEventListener('click', () => showView('home'));
 document.getElementById('client-loan-toggle').addEventListener('change', async (e) => {
   if (!currentClientId) return;
-  await db.clients.update(currentClientId, { loanEligible: e.target.checked });
+  await db.clients.update(currentClientId, { loanEligible: e.target.checked, updatedAt: new Date().toISOString(), synced: false });
   toast(e.target.checked ? 'Loan eligibility enabled' : 'Loan eligibility disabled');
   await populateClientFilters();
+  attemptSync();
 });
 
 /* =========================================================================
    WHATSAPP RECEIPT MODAL
 ========================================================================= */
 const modalReceipt = document.getElementById('modal-receipt');
+let receiptState = null; // holds the fetched data so the link never depends on an in-flight DB read
+
 async function openReceipt(txnId, phone) {
   const t = await db.transactions.get(txnId);
+  if (!t) return;
   const c = await db.clients.get(t.clientId);
   const bal = await computeClientBalances(t.clientId);
   const meta = TYPE_META[t.type];
   const receiptId = 'RCPT-' + t.id.slice(-8).toUpperCase();
+
+  receiptState = { t, c, bal, meta, receiptId };
 
   document.getElementById('receipt-body').innerHTML = `
     <div class="flex justify-between"><span>Receipt ID</span><span>${receiptId}</span></div>
@@ -905,28 +1057,25 @@ async function openReceipt(txnId, phone) {
     <div class="flex justify-between"><span>Loan bal.</span><span>${fmtMoney(bal.loan)}</span></div>
   `;
   document.getElementById('receipt-note').value = t.note || '';
-  document.getElementById('receipt-phone').value = phone || (c ? c.phone : '');
-  modalReceipt.dataset.txnId = txnId;
+  document.getElementById('receipt-phone').value = (phone || (c ? c.phone : '') || '').replace(/\D/g, '');
+  document.getElementById('receipt-phone-hint').classList.add('hidden');
   modalReceipt.classList.remove('hidden'); modalReceipt.classList.add('flex');
-  updateReceiptLink();
+  updateReceiptLink(); // synchronous — receiptState is already in memory, so the link is correct immediately
 }
 document.getElementById('close-receipt').addEventListener('click', () => {
   modalReceipt.classList.add('hidden'); modalReceipt.classList.remove('flex');
+  receiptState = null;
 });
 document.getElementById('receipt-note').addEventListener('input', updateReceiptLink);
 document.getElementById('receipt-phone').addEventListener('input', updateReceiptLink);
 
-async function updateReceiptLink() {
-  const txnId = modalReceipt.dataset.txnId;
-  if (!txnId) return;
-  const t = await db.transactions.get(txnId);
-  if (!t) return;
-  const c = await db.clients.get(t.clientId);
-  const bal = await computeClientBalances(t.clientId);
-  const meta = TYPE_META[t.type];
-  const receiptId = 'RCPT-' + t.id.slice(-8).toUpperCase();
+function updateReceiptLink() {
+  if (!receiptState) return;
+  const { t, c, bal, meta, receiptId } = receiptState;
   const note = document.getElementById('receipt-note').value.trim();
   const phone = document.getElementById('receipt-phone').value.trim().replace(/\D/g, '');
+  const link = document.getElementById('send-receipt');
+  const hint = document.getElementById('receipt-phone-hint');
 
   const text = [
     `*Ledger Field Receipt*`,
@@ -940,7 +1089,20 @@ async function updateReceiptLink() {
     note ? `Note: ${note}` : null,
   ].filter(Boolean).join('\n');
 
-  document.getElementById('send-receipt').href = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+  // A valid international number is at minimum a country code + local number (~8 digits).
+  if (phone.length < 8) {
+    link.href = '#';
+    link.setAttribute('aria-disabled', 'true');
+    link.classList.add('opacity-40', 'pointer-events-none');
+    hint.classList.remove('hidden');
+  } else {
+    link.classList.remove('opacity-40', 'pointer-events-none');
+    link.removeAttribute('aria-disabled');
+    hint.classList.add('hidden');
+    // api.whatsapp.com/send is the official, most reliable deep link — it opens the
+    // WhatsApp app when installed and falls back to WhatsApp Web otherwise.
+    link.href = `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(text)}`;
+  }
 }
 
 /* =========================================================================
@@ -986,9 +1148,22 @@ document.getElementById('theme-toggle').addEventListener('click', () => {
 async function renderSettings() {
   document.getElementById('settings-online').textContent = navigator.onLine ? 'Online' : 'Offline';
   document.getElementById('settings-online').className = 'text-sm font-medium ' + (navigator.onLine ? 'text-savings-500' : 'text-alert-500');
-  const pending = await db.transactions.filter(t => !t.synced).count();
-  document.getElementById('settings-pending').textContent = pending;
+  const pendingT = await db.transactions.filter(t => !t.synced).count();
+  const pendingC = await db.clients.filter(c => !c.synced).count();
+  document.getElementById('settings-pending').textContent = pendingT + pendingC;
   document.getElementById('settings-currency').value = CURRENCY;
+
+  const statusEl = document.getElementById('settings-cloud-status');
+  const descEl = document.getElementById('settings-cloud-desc');
+  if (isCloudConfigured()) {
+    statusEl.textContent = navigator.onLine ? 'Connected' : 'Connected (offline)';
+    statusEl.className = 'text-xs font-medium px-2 py-0.5 rounded-full bg-savings-500/10 text-savings-500';
+    descEl.textContent = 'This device is connected to your Supabase project. Changes made here sync to every other device signed into the same project, and their changes sync back here automatically.';
+  } else {
+    statusEl.textContent = 'Not connected';
+    statusEl.className = 'text-xs font-medium px-2 py-0.5 rounded-full bg-alert-500/10 text-alert-500';
+    descEl.textContent = 'Not connected yet, so data only lives on this device. Connect a free Supabase project once and every device signed into it — phone, tablet, desktop — will see the same clients and transactions live.';
+  }
 }
 document.getElementById('settings-currency').addEventListener('change', async (e) => {
   CURRENCY = e.target.value;
@@ -1008,12 +1183,14 @@ document.getElementById('btn-reset-data').addEventListener('click', async () => 
 });
 
 /* =========================================================================
-   OFFLINE / ONLINE SYNC
+   CLOUD SYNC (Supabase) — real, live, multi-device sync.
+   Local Dexie is always the source of truth for the UI; this layer keeps it
+   in lock-step with a shared Supabase project so device A, B, C all agree.
 ========================================================================= */
 function setOnlineBadge() {
   const badge = document.getElementById('online-badge');
   if (navigator.onLine) {
-    badge.textContent = '● Online';
+    badge.textContent = isCloudConfigured() ? '● Online — synced' : '● Online';
     badge.className = 'text-[11px] leading-none mt-1 text-savings-500 font-medium';
   } else {
     badge.textContent = '● Offline — saved locally';
@@ -1023,37 +1200,111 @@ function setOnlineBadge() {
 window.addEventListener('online', () => { setOnlineBadge(); attemptSync(); renderSettings(); });
 window.addEventListener('offline', () => { setOnlineBadge(); renderSettings(); });
 
-// Placeholder cloud push — wire this up to Supabase/Firebase using CONFIG above.
-async function pushToCloud(record) {
-  if (CONFIG.BACKEND === 'supabase') {
-    // const supabase = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
-    // await supabase.from('transactions').upsert(record);
-    return true;
+function initCloud() {
+  if (!isCloudConfigured() || !window.supabase) return;
+  try {
+    supabaseClient = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+    subscribeRealtime();
+  } catch (err) {
+    console.error('Supabase init failed', err);
+    supabaseClient = null;
   }
-  if (CONFIG.BACKEND === 'firebase') {
-    // firebase.firestore().collection('transactions').doc(record.id).set(record);
-    return true;
-  }
-  // Demo mode: no backend configured, simulate a successful push.
+}
+
+// Local (camelCase) <-> remote (snake_case) field mapping.
+function clientToRemote(c) {
+  return { id: c.id, name: c.name, phone: c.phone, photo: c.photo || null, loan_eligible: !!c.loanEligible, created_at: c.createdAt, updated_at: c.updatedAt || c.createdAt };
+}
+function clientFromRemote(r) {
+  return { id: r.id, name: r.name, phone: r.phone, photo: r.photo || null, loanEligible: !!r.loan_eligible, createdAt: r.created_at, updatedAt: r.updated_at, synced: true };
+}
+function txnToRemote(t) {
+  return { id: t.id, client_id: t.clientId, type: t.type, amount: t.amount, note: t.note || '', timestamp: t.timestamp, updated_at: t.updatedAt || t.timestamp };
+}
+function txnFromRemote(r) {
+  return { id: r.id, clientId: r.client_id, type: r.type, amount: r.amount, note: r.note || '', timestamp: r.timestamp, updatedAt: r.updated_at, synced: true };
+}
+
+async function pushToCloud(table, record) {
+  if (!supabaseClient) return false;
+  const payload = table === 'clients' ? clientToRemote(record) : txnToRemote(record);
+  const { error } = await supabaseClient.from(table).upsert(payload);
+  if (error) { console.error(`Push to ${table} failed`, error); return false; }
   return true;
+}
+
+// Pull the full shared dataset down and merge it into local storage. Any record
+// still pending a local push is left alone so an in-flight edit is never clobbered.
+async function pullFromCloud() {
+  if (!supabaseClient) return false;
+  let changed = false;
+  try {
+    const [{ data: remoteClients, error: e1 }, { data: remoteTxns, error: e2 }] = await Promise.all([
+      supabaseClient.from('clients').select('*'),
+      supabaseClient.from('transactions').select('*'),
+    ]);
+    if (e1 || e2) { console.error('Pull failed', e1 || e2); return false; }
+
+    for (const r of remoteClients || []) {
+      const local = await db.clients.get(r.id);
+      if (!local || (local.synced && local.updatedAt !== r.updated_at)) { await db.clients.put(clientFromRemote(r)); changed = true; }
+    }
+    for (const r of remoteTxns || []) {
+      const local = await db.transactions.get(r.id);
+      if (!local || (local.synced && local.updatedAt !== r.updated_at)) { await db.transactions.put(txnFromRemote(r)); changed = true; }
+    }
+  } catch (err) {
+    console.error('Pull from cloud failed', err);
+  }
+  return changed;
+}
+
+// Live updates: another device's change lands here within a second or two.
+function subscribeRealtime() {
+  if (!supabaseClient) return;
+  supabaseClient
+    .channel('ledger-field-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, async (payload) => {
+      if (payload.eventType === 'DELETE') await db.clients.delete(payload.old.id);
+      else await db.clients.put(clientFromRemote(payload.new));
+      toast('Updated from another device');
+      await populateClientFilters();
+      await refreshCurrentView();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, async (payload) => {
+      if (payload.eventType === 'DELETE') await db.transactions.delete(payload.old.id);
+      else await db.transactions.put(txnFromRemote(payload.new));
+      toast('Updated from another device');
+      await refreshCurrentView();
+    })
+    .subscribe();
 }
 
 let syncing = false;
 async function attemptSync(manual) {
   if (!navigator.onLine || syncing) { if (manual) toast('Still offline — will sync automatically.'); return; }
+  if (!isCloudConfigured()) { if (manual) toast('Connect a cloud project in Settings to enable multi-device sync.'); return; }
+  if (!supabaseClient) initCloud();
   syncing = true;
-  const pending = await db.transactions.filter(t => !t.synced).toArray();
-  if (pending.length === 0) { if (manual) toast('Everything is already synced.'); syncing = false; return; }
-  for (const t of pending) {
-    try {
-      const ok = await pushToCloud(t);
-      if (ok) await db.transactions.update(t.id, { synced: true });
-    } catch (err) { /* leave as pending, retry next time */ }
+
+  const pendingClients = await db.clients.filter(c => !c.synced).toArray();
+  const pendingTxns = await db.transactions.filter(t => !t.synced).toArray();
+
+  for (const c of pendingClients) {
+    try { if (await pushToCloud('clients', c)) await db.clients.update(c.id, { synced: true }); }
+    catch (err) { /* leave pending, retry next time */ }
   }
+  for (const t of pendingTxns) {
+    try { if (await pushToCloud('transactions', t)) await db.transactions.update(t.id, { synced: true }); }
+    catch (err) { /* leave pending, retry next time */ }
+  }
+  const pulledChanges = await pullFromCloud();
+
   syncing = false;
-  if (manual) toast(`Synced ${pending.length} record(s).`);
+  const total = pendingClients.length + pendingTxns.length;
+  if (manual) toast(total > 0 ? `Synced ${total} record(s).` : 'Everything is already synced.');
   await renderSettings();
-  if (document.getElementById('view-transactions').classList.contains('active')) renderLedger();
+  if (manual || total > 0 || pulledChanges) await refreshCurrentView();
 }
 
 /* =========================================================================
@@ -1068,6 +1319,8 @@ async function refreshCurrentView() {
 (async function init() {
   applyTheme(localStorage.getItem('lf_theme') === 'dark' || (!localStorage.getItem('lf_theme') && window.matchMedia('(prefers-color-scheme: dark)').matches));
   setOnlineBadge();
+  initCloud();
+  if (navigator.onLine && isCloudConfigured()) await pullFromCloud();
   await populateClientFilters();
   await renderHome();
   attemptSync();
