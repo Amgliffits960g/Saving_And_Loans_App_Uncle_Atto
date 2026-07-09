@@ -1075,7 +1075,11 @@ function updateReceiptLink() {
   const hint = document.getElementById('receipt-phone-hint');
 
   const text = [
-    `*Ledger Field Receipt*`,
+    `*Thank You ${c.name} for saving with us!*`,
+    `*This is your receipt*`,
+    `*Contact 0208994825 for more info*`,
+    ``,
+    ``,
     `Receipt ID: ${receiptId}`,
     `Client: ${c ? c.name : ''}`,
     `Date: ${fmtDate(t.timestamp)}`,
