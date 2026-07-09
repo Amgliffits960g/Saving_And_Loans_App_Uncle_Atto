@@ -350,9 +350,6 @@ alter publication supabase_realtime add table clients, transactions;</pre>
         <p class="text-sm font-medium">Currency</p>
         <select id="settings-currency" class="tap w-full text-sm rounded-xl px-3 bg-white dark:bg-ink-800 border border-ink-100 dark:border-ink-700">
           <option value="GH₵">GH₵ — Ghanaian Cedi</option>
-          <option value="₦">₦ — Nigerian Naira</option>
-          <option value="KSh">KSh — Kenyan Shilling</option>
-          <option value="$">$ — US Dollar</option>
         </select>
       </div>
       <div class="rounded-2xl bg-alert-500/10 border border-alert-500/30 p-4">
@@ -469,7 +466,7 @@ alter publication supabase_realtime add table clients, transactions;</pre>
         <label class="block text-[11px] font-body text-ink-900/60 dark:text-paper/60 mb-1">Note to customer</label>
         <textarea id="receipt-note" rows="2" class="w-full font-body text-sm rounded-lg px-2 py-1.5 bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700"></textarea>
         <label class="block text-[11px] font-body text-ink-900/60 dark:text-paper/60 mt-2 mb-1">Send to (WhatsApp number, with country code)</label>
-        <input id="receipt-phone" type="tel" placeholder="e.g. 233241234567" class="w-full font-mono-num text-sm rounded-lg px-2 py-1.5 bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700">
+        <input id="receipt-phone" type="tel" placeholder="e.g. 233599888073" value="233" class="w-full font-mono-num text-sm rounded-lg px-2 py-1.5 bg-ink-50 dark:bg-ink-700 border border-ink-100 dark:border-ink-700">
         <p id="receipt-phone-hint" class="text-[11px] font-body text-alert-500 mt-1 hidden">Add a full number with country code (no + or spaces needed) to enable sending.</p>
       </div>
       <div class="flex gap-2 mt-3">
