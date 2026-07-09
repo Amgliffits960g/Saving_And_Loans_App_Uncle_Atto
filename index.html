@@ -436,7 +436,7 @@ alter publication supabase_realtime add table clients, transactions;</pre>
           <div id="client-photo-preview" class="w-16 h-16 rounded-full bg-ink-50 dark:bg-ink-700 flex items-center justify-center text-ink-900/30 dark:text-paper/30 text-2xl shrink-0 overflow-hidden">📷</div>
           <div class="flex-1">
             <label class="text-xs font-medium text-ink-900/60 dark:text-paper/60">Photo (optional)</label>
-            <input id="client-photo-input" type="file" accept="image/*" capture="environment" class="tap w-full mt-1 text-xs file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-ink-100 dark:file:bg-ink-800 file:text-xs">
+           <input id="client-photo-input" type="file" accept="image/*" class="tap w-full mt-1 text-xs file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-ink-100 dark:file:bg-ink-800 file:text-xs">
             <button type="button" id="client-photo-remove" class="text-[11px] text-alert-500 mt-1 hidden">Remove photo</button>
           </div>
         </div>
@@ -1173,10 +1173,39 @@ document.getElementById('settings-currency').addEventListener('change', async (e
 });
 document.getElementById('btn-force-sync').addEventListener('click', () => attemptSync(true));
 document.getElementById('btn-reset-data').addEventListener('click', async () => {
-  if (!confirm('This permanently deletes every client and transaction stored on this device. Continue?')) return;
-  await db.clients.clear();
+  if (!confirm('WARNING: This will permanently delete ALL clients and transactions from BOTH this device and your Supabase cloud database. Continue?')) return;
+  
+  toast('Clearing cloud data... please wait...');
+
+  // 1. Wipe the Supabase database tables safely if connected
+  if (typeof supabaseClient !== 'undefined' && supabaseClient) {
+    try {
+      const localClients = await db.clients.toArray();
+      const localTransactions = await db.transactions.toArray();
+
+      const clientIds = localClients.map(c => c.id);
+      const transactionIds = localTransactions.map(t => t.id);
+
+      // Delete transactions first to keep database key constraints happy
+      if (transactionIds.length > 0) {
+        await supabaseClient.from('transactions').delete().in('id', transactionIds);
+      }
+      
+      // Delete clients second
+      if (clientIds.length > 0) {
+        await supabaseClient.from('clients').delete().in('id', clientIds);
+      }
+    } catch (err) {
+      console.error('Cloud clear failed, proceeding with local clear:', err);
+      toast('Cloud clear failed: ' + err.message);
+    }
+  }
+
+  // 2. Clear the local browser databases
   await db.transactions.clear();
-  toast('All data cleared');
+  await db.clients.clear();
+  
+  toast('All local and cloud data completely wiped');
   currentClientId = null;
   await populateClientFilters();
   await refreshCurrentView();
